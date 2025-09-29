@@ -3,6 +3,7 @@ on:
   schedule:
     - cron: '10 7 * * *'   # roda todo dia ~07:10 UTC
   workflow_dispatch:
+
 jobs:
   ingest-compras:
     runs-on: ubuntu-latest
@@ -12,11 +13,30 @@ jobs:
         with: { node-version: '20' }
       - run: npm init -y
       - run: npm i axios @supabase/supabase-js nodemailer
+
+      # (opcional) prechecks rápidos
+      - name: Precheck — listar arquivos
+        run: ls -la
+      - name: Precheck — validar secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          node -e "console.log('SUPABASE_URL set?', !!process.env.SUPABASE_URL)"
+          node -e "console.log('SERVICE_ROLE set?', !!process.env.SUPABASE_SERVICE_ROLE_KEY)"
+
       - name: Ingerir COMPRAS (Licitações)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: node scripts/ingest_compras.js
+
+      - name: Ingerir PNCP (Compras)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/ingest_pncp.js
+
       - name: Enviar e-mail diário
         if: ${{ env.SMTP_HOST != '' }}
         env:
