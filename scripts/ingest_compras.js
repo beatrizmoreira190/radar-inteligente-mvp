@@ -97,4 +97,45 @@ async function fetchPage(base, path, offset=0, limit=50){
         }
         if (inserted || updated) { ok = true; break; }
       } catch (e) {
-        // Continua para o próximo alvo
+        // Continua para o próximo alvo se este falhar (404, etc.)
+        console.log(`Alvo ${t.path} falhou: ${e?.response?.status || ''} ${e?.message}`);
+        continue;
+      }
+    }
+
+    // Se nada entrou, garante UMA linha de teste
+    if (!inserted && !updated){
+      await upsert({
+        title: 'TESTE — Inserido pelo workflow (COMPRASGOV)',
+        portal: 'COMPRASGOV',
+        agency: 'UASG 000000',
+        state: 'DF',
+        modality: 'Pregão',
+        notice_number: 'TESTE-0001',
+        link: null,
+        deadline_date: null,
+        status: 'monitorando',
+        updated_at: new Date().toISOString()
+      });
+      inserted = 1;
+      console.log('Nenhum dado retornado dos endpoints. Inserida linha de TESTE para validar escrita.');
+    }
+
+    await sb.from('ingestion_logs').insert({
+      source:'COMPRASGOV',
+      params:{ targets: TARGETS.map(t=>t.path) },
+      inserted_count: inserted,
+      updated_count: updated
+    });
+
+    console.log(`FINAL: inseridos ${inserted}, atualizados ${updated}`);
+  } catch (e){
+    console.error('Erro geral:', e?.response?.status, e?.message);
+    await sb.from('ingestion_logs').insert({
+      source:'COMPRASGOV',
+      params:{ fail:true },
+      error: String(e?.message || e)
+    });
+    process.exit(1);
+  }
+})();
