@@ -1,27 +1,21 @@
 // scripts/ingest_pncp.js — coleta via PNCP (consulta pública)
-// Paginado por ?pagina=&tamanho= ; filtra ano corrente (pode ajustar UF/palavraChave depois).
 
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
-
 const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-// Base da API de consultas do PNCP (ajuste se necessário)
 const PNCP_BASE = 'https://pncp.gov.br/pncp-api/consultas/v1';
-const PATH = '/compras'; // coleção de compras
+const PATH = '/compras';
 
 const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
 const pick  = (...vals)=>{ for (const v of vals){ if (v!==undefined && v!==null && v!=='') return v; } return null; };
 
 async function upsert(o){
-  const { error } = await sb
-    .from('opportunities')
-    .upsert(o, { onConflict:'portal,notice_number,agency' });
+  const { error } = await sb.from('opportunities').upsert(o, { onConflict:'portal,notice_number,agency' });
   if (error) throw error;
 }
 
 function mapItem(it){
-  // Campos comuns no PNCP (podem variar entre ambientes; ajustamos no uso)
   const title    = pick(it.objetoCompra, it.objeto, it.descricao, 'Sem título');
   const notice   = pick(it.numeroCompra, it.numeroEdital, it.identificador, null);
   const agency   = pick(it.orgaoNome, it.orgao?.nome, it.unidadeGestoraNome);
@@ -45,12 +39,13 @@ function mapItem(it){
   };
 }
 
+// >>> ESTE É O fetchPage que você pediu <<<
 async function fetchPage(pagina=0){
   const url = new URL(PNCP_BASE + PATH);
   url.searchParams.set('pagina', String(pagina));
   url.searchParams.set('tamanho', '50');
   url.searchParams.set('ano', String(new Date().getFullYear()));
-  // Ex.: filtros extras (descomente conforme necessidade)
+  // filtros extras (opcional):
   // url.searchParams.set('uf', 'SP');
   // url.searchParams.set('palavraChave', 'livro');
   const resp = await axios.get(url.toString(), {
@@ -72,7 +67,6 @@ async function fetchPage(pagina=0){
 
       for (const it of items){
         const o = mapItem(it);
-        // pular itens vazios
         if ((!o.title || o.title === 'Sem título') && !o.notice_number) continue;
 
         const before = await sb.from('opportunities')
@@ -92,7 +86,6 @@ async function fetchPage(pagina=0){
       await sleep(400);
     }
 
-    // fallback: garante 1 linha se nada entrou
     if (!inserted && !updated){
       await upsert({
         title:'TESTE — PNCP (validação de escrita)',
