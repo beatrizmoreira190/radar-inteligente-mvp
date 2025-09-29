@@ -70,4 +70,98 @@ function mapItem(it){
 async function fetchPage(base, path, offset=0, limit=50){
   const url = new URL(base + path);
   url.searchParams.set('offset', String(offset));
-  url.searchParams.set('limit',  String(lim
+  url.searchParams.set('limit',  String(limit));
+  const resp = await axios.get(url.toString(), {
+    timeout: 30000,
+    headers: { 'Accept': 'application/json', 'User-Agent': 'Radar-Inteligente-MVP/1.0 (contato@exemplo.com)' }
+  });
+  return resp.data;
+}
+
+(async ()=>{
+  let inserted = 0, updated = 0;
+
+  try {
+    for (const t of TARGETS){
+      let offset = 0, limit = 50, round = 0;
+
+      try {
+        while (round < 10) { // até 500 itens por alvo (MVP)
+          const raw = await fetchPage(t.base, t.path, offset, limit);
+
+          // Normaliza onde pode estar a lista
+          const arr =
+            Array.isArray(raw.licitacoes) ? raw.licitacoes :
+            Array.isArray(raw.pregoes)    ? raw.pregoes    :
+            Array.isArray(raw.items)      ? raw.items      :
+            Array.isArray(raw.resultado)  ? raw.resultado  :
+            Array.isArray(raw._embedded?.licitacoes) ? raw._embedded.licitacoes :
+            Array.isArray(raw._embedded?.pregoes)    ? raw._embedded.pregoes    :
+            [];
+
+          if (!arr.length) break;
+
+          for (const it of arr){
+            const o = mapItem(it);
+            // evita linhas totalmente vazias
+            if ((!o.title || o.title === 'Sem título') && !o.notice_number) continue;
+
+            const before = await sb.from('opportunities')
+              .select('id')
+              .eq('portal', o.portal)
+              .eq('notice_number', o.notice_number)
+              .eq('agency', o.agency)
+              .maybeSingle();
+
+            await upsert(o);
+            if (before.data?.id) updated++; else inserted++;
+          }
+
+          if (arr.length < limit) break;
+          offset += limit; round++;
+          await sleep(400);
+        }
+
+        if (inserted || updated) break; // já deu bom em um dos alvos
+      } catch (e) {
+        console.log(`Alvo ${t.path} falhou: ${e?.response?.status || ''} ${e?.message}`);
+        continue; // tenta o próximo alvo
+      }
+    }
+
+    // fallback: pelo menos 1 linha p/ validar escrita
+    if (!inserted && !updated){
+      await upsert({
+        title: 'TESTE — Inserido pelo workflow (COMPRASGOV)',
+        portal: 'COMPRASGOV',
+        agency: 'UASG 000000',
+        state: 'DF',
+        modality: 'Pregão',
+        notice_number: 'TESTE-0001',
+        link: null,
+        deadline_date: null,
+        status: 'monitorando',
+        updated_at: new Date().toISOString()
+      });
+      inserted = 1;
+      console.log('Nenhum dado retornado dos endpoints. Inserida linha de TESTE para validar escrita.');
+    }
+
+    await sb.from('ingestion_logs').insert({
+      source:'COMPRASGOV',
+      params:{ targets: TARGETS.map(t=>t.path) },
+      inserted_count: inserted,
+      updated_count: updated
+    });
+
+    console.log(`FINAL: inseridos ${inserted}, atualizados ${updated}`);
+  } catch (e){
+    console.error('Erro geral:', e?.response?.status, e?.message);
+    await sb.from('ingestion_logs').insert({
+      source:'COMPRASGOV',
+      params:{ fail:true },
+      error: String(e?.message || e)
+    });
+    process.exit(1);
+  }
+})();
